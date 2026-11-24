@@ -1,0 +1,173 @@
+from app.core.database import SessionLocal
+from app.models import Course, CourseTopic
+
+SOURCE = "Yr1 CSC Course Line.pdf (user-provided, pages 1-3)"
+
+
+def normalize_code(code: str) -> str:
+    return "".join(character for character in code.upper() if character.isalnum())
+
+
+COURSE_TOPICS = {
+    "COS101": [
+        ("Brief history of computing. Description of the basic components of a computer/computing device.", None),
+        ("Input/Output devices and peripherals.", None),
+        ("Hardware, software, and humanware.", None),
+        ("Diverse and growing computer/digital applications. Information processing and its roles in society.", None),
+        ("The Internet, its applications, and its impact on the world today.", None),
+        ("The different areas/programs of the computing discipline.", None),
+        ("The job specializations for computing professionals. The future of computing.", None),
+        ("Lab Work", "Practical demonstration of the basic parts of a computer. Illustration of different operating systems of different computing devices, including desktops, laptops, tablets, smart boards, and smartphones. Demonstration of commonly used applications such as word processors, spreadsheets, presentation software, and graphics. Illustration of input and output devices, including printers, scanners, projectors, and smartboards. Practical demonstration of the Internet and its various applications. Illustration of browsers and search engines. How to access online resources."),
+    ],
+    "MTH101": [
+        ("Elementary set theory, subsets, union, intersection, complements, and Venn diagrams.", None),
+        ("Real numbers; integers, rational and irrational numbers, mathematical induction, real sequences and series, theory of quadratic equations, and binomial theorem.", None),
+        ("Complex numbers; algebra of complex numbers; the Argand diagram.", None),
+        ("De Moivre’s theorem, nth roots of unity.", None),
+        ("Circular measure, trigonometric functions of angles of any magnitude, addition, and factor formulae.", None),
+    ],
+    "PHY101": [
+        ("Space and time.", None),
+        ("Units and dimensions, vectors and scalars, differentiation of vectors.", None),
+        ("Displacement, velocity, and acceleration. Kinematics.", None),
+        ("Newton's laws of motion (inertial frames, impulse, force and action at a distance, momentum conservation).", None),
+        ("Relative motion. Application of Newtonian mechanics.", None),
+        ("Equations of motion.", None),
+        ("Conservation principles in physics, conservative forces, conservation of linear momentum, kinetic energy and work, potential energy, system of particles, and center of mass.", None),
+        ("Rotational motion.", None),
+        ("Torque, vector product, moment, rotation of coordinate axes, and angular momentum.", None),
+        ("Polar coordinates. Conservation of angular momentum.", None),
+        ("Circular motion.", None),
+        ("Moments of inertia, gyroscopes, and precession. Gravitation:", None),
+        ("Newton’s Law of Gravitation, Kepler’s laws of planetary motion, gravitational potential energy, escape velocity, satellite motion, and orbits.", None),
+    ],
+    "PHY107": [
+        ("This introductory course emphasizes quantitative measurements, the treatment of measurement errors, and graphical analysis.", None),
+        ("A variety of experimental techniques should be employed.", None),
+        ("The experiments include studies of meters, the oscilloscope, mechanical systems, electrical and mechanical resonant systems, light, heat, viscosity, etc., covered in PHY 101 and PHY 102.", None),
+        ("However, emphasis should be placed on the basic physical techniques for observation, measurements, data collection, analysis, and deduction.", None),
+    ],
+    "STA111": [
+        ("Statistical data.", None),
+        ("Types, sources, and methods of collection.", None),
+        ("Presentation of data.", None),
+        ("Tables, charts, and graphs.", None),
+        ("Errors and approximations.", None),
+        ("Frequency and cumulative distributions.", None),
+        ("Measures of location, partition, dispersion, skewness, and kurtosis.", None),
+        ("Rates, ratios, and index numbers.", None),
+    ],
+    "NAUCSC111": [
+        ("Logic: Meaning of logic. Properties.", None),
+        ("Proposition logic, predicate logic, connectives, conjunction, disjunction, limitations of propositional logic, binary relations;", None),
+        ("Mapping: Types of mapping;", None),
+        ("Functions: Proof strategy: types of proof strategy.", None),
+        ("Modus Ponens, Modus Tollens, and strategies for connectives.", None),
+    ],
+    "NAUCHM101": [
+        ("Brief historical background, bonding in organic compounds, the carbon atom, and hybridization (sp3, sp2, sp).", None),
+        ("Classification of organic compounds, isolation and purification of organic compounds, elemental or qualitative analysis, quantitative analysis, formulae of organic compounds (empirical, molecular, and structural),", None),
+        ("Structural and stereoisomerisms, functional groups, and homologous series.", None),
+        ("IUPAC Nomenclature—IUPAC Nomenclature of the following family of organic compounds: alkanes, alkenes, alkynes, halogenoalkanes, alkanols, alkanals, alkanones, alkanoates, acid amides, nitriles and amines, alkanoic acids, acid chlorides, and acid anhydrides.", None),
+        ("Preparation and physical and chemical properties of the families listed above.", None),
+    ],
+    "NAUBIO101": [
+        ("Cell structure and organization.", None),
+        ("Function of cellular organisms.", None),
+        ("Characteristics and classification of living things.", None),
+        ("Chromosomes and genes: their relationship and importance. General reproduction and interrelationships of organisms (competitors, parasitism, predation, symbiosis, commensalism, mutualism, saprophytism).", None),
+        ("Heredity and evolution (Introduction to Darwinism and Lamarkism, Mendelian laws, and explanation of key genetic terms).", None),
+        ("Elements of ecology and types of habitats.", None),
+    ],
+    "GST111": [("Read the whole textbook and novels", None)],
+    "GST113": [("Read the whole textbook and novels", None)],
+}
+
+
+def main():
+    db = SessionLocal()
+    try:
+        courses = db.query(Course).all()
+        course_lookup = {normalize_code(course.code): course for course in courses}
+
+        aliases = {
+            "COS101": ["COS101"],
+            "MTH101": ["MTH101"],
+            "PHY101": ["PHY101"],
+            "PHY107": ["PHY107"],
+            "STA111": ["STA111"],
+            "NAUCSC111": ["NAUCSC111"],
+            "NAUCHM101": ["NAUCHM101"],
+            "NAUBIO101": ["NAUBIO101"],
+            "GST111": ["GST111", "NAUGST111"],
+            "GST113": ["GST113", "NAUGST113"],
+        }
+
+        resolved_courses = {}
+        missing_courses = []
+
+        for key, possible_codes in aliases.items():
+            found = next(
+                (course_lookup.get(normalize_code(code)) for code in possible_codes
+                 if course_lookup.get(normalize_code(code))),
+                None,
+            )
+            if found:
+                resolved_courses[key] = found
+            else:
+                missing_courses.append(key)
+
+        if missing_courses:
+            print("IMPORT STOPPED. These course codes were not found:")
+            for code in missing_courses:
+                print(f" - {code}")
+            print("No topics were inserted.")
+            return
+
+        created = 0
+        skipped = 0
+
+        for course_code, topics in COURSE_TOPICS.items():
+            course = resolved_courses[course_code]
+            existing_topics = {
+                (topic.position, topic.title)
+                for topic in db.query(CourseTopic)
+                .filter(CourseTopic.course_id == course.id)
+                .all()
+            }
+
+            for position, (title, description) in enumerate(topics, start=1):
+                if (position, title) in existing_topics:
+                    skipped += 1
+                    continue
+
+                db.add(CourseTopic(
+                    title=title,
+                    description=description,
+                    position=position,
+                    verification_status="unverified",
+                    source=SOURCE,
+                    course_id=course.id,
+                ))
+                created += 1
+
+        db.commit()
+        print("COURSE TOPIC IMPORT COMPLETED")
+        print(f"Topics created: {created}")
+        print(f"Existing topics skipped: {skipped}")
+        print(f"Courses processed: {len(resolved_courses)}")
+        print("\nTOPIC COUNTS:")
+        for course_code in COURSE_TOPICS:
+            course = resolved_courses[course_code]
+            count = db.query(CourseTopic).filter(CourseTopic.course_id == course.id).count()
+            print(f"{course.code}: {count} topics")
+
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+if __name__ == "__main__":
+    main()

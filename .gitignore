@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+# Environment secrets
+.env
+.env.*
+!.env.example
+# SQLite databases
+*.db
+*.sqlite3
+# Frontend
+node_modules/
+frontend/dist/
+# Uploaded documents and private storage
+storage/documents/*
+!storage/documents/.gitkeep
+backend/storage/chroma/
+# Editors
+.vscode/
+.idea/

@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+pydantic-settings
+python-multipart
+pymupdf
+pwdlib[argon2]
+PyJWT
+requests
+pytest
+httpx2
+chromadb==1.5.9
+sentence-transformers==6.3.0
+google-genai==3.6.1
