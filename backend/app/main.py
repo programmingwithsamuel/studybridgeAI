@@ -108,6 +108,10 @@ def migrate_auth_schema() -> None:
             document_columns = {column["name"] for column in inspector.get_columns("documents")}
             if "withdrawn_at" not in document_columns:
                 connection.execute(text("ALTER TABLE documents ADD COLUMN withdrawn_at DATETIME"))
+            if "visibility" not in document_columns:
+                connection.execute(text(
+                    "ALTER TABLE documents ADD COLUMN visibility VARCHAR(20) NOT NULL DEFAULT 'course'"
+                ))
 
         if "chat_messages" in inspector.get_table_names():
             message_columns = {column["name"] for column in inspector.get_columns("chat_messages")}

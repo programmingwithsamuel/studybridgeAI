@@ -13,6 +13,7 @@ class DocumentResponse(BaseModel):
     page_count: int | None
     uploaded_by_id: int
     course_id: int | None
+    visibility: str
     status: str
     created_at: datetime
     updated_at: datetime

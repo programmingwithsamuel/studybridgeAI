@@ -24,6 +24,14 @@ class DocumentStatus(str, Enum):
     SUPERSEDED = "superseded"
 
 
+class DocumentVisibility(str, Enum):
+    COURSE = "course"
+    DEPARTMENT = "department"
+    FACULTY = "faculty"
+    UNIVERSITY = "university"
+    PRIVATE = "private"
+
+
 class Document(Base):
     __tablename__ = "documents"
 
@@ -47,6 +55,12 @@ class Document(Base):
     course_id: Mapped[int | None] = mapped_column(
         ForeignKey("courses.id"),
         nullable=True,
+    )
+
+    visibility: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default=DocumentVisibility.COURSE.value,
     )
 
     status: Mapped[DocumentStatus] = mapped_column(

@@ -8,7 +8,9 @@ from app.models.profiles import (
     StudentProfile, LecturerProfile, LecturerCourseAssignment,
     ProfileChangeRequest, UserSession, AcademicAffiliation, ReviewerAssignment,
 )
-from app.models.document import Document, DocumentVersion, DocumentStatus, DocumentIndexStatus
+from app.models.document import (
+    Document, DocumentVersion, DocumentStatus, DocumentVisibility, DocumentIndexStatus,
+)
 from app.models.review import DocumentPermission, ReviewDecision, PermissionLevel, ReviewAction
 from app.models.chat import ChatSession, ChatMessage
 from app.models.practice import PracticeQuestion, StudentProgress
@@ -18,7 +20,7 @@ __all__ = [
     "Course", "CourseTopic", "Programme", "ProgrammeCourse", "StudentProfile",
     "LecturerProfile", "LecturerCourseAssignment", "ProfileChangeRequest", "UserSession",
     "AcademicAffiliation", "ReviewerAssignment",
-    "Document", "DocumentVersion", "DocumentStatus", "DocumentIndexStatus",
+    "Document", "DocumentVersion", "DocumentStatus", "DocumentVisibility", "DocumentIndexStatus",
     "DocumentPermission", "ReviewDecision", "PermissionLevel", "ReviewAction",
     "ChatSession", "ChatMessage", "PracticeQuestion", "StudentProgress",
 ]

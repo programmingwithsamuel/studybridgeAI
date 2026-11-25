@@ -11,8 +11,10 @@ from app.api.dependencies import require_roles
 from app.core.database import get_db
 from app.models import (
     AcademicAffiliation, AuditLog, Course, Department, Document, DocumentPermission,
-    DocumentStatus, DocumentVersion, LecturerCourseAssignment, LecturerProfile,
-    PermissionLevel, ReviewerAssignment, ReviewAction, ReviewDecision, User, UserRole,
+    DocumentStatus, DocumentVersion, DocumentVisibility, Faculty, LecturerCourseAssignment,
+    LecturerProfile, PermissionLevel, Programme, ProgrammeCourse, ReviewerAssignment,
+    ReviewAction, ReviewDecision,
+    University, User, UserRole,
 )
 from app.schemas.document import DocumentResponse, ReviewDecisionResponse
 from app.services.document_indexing import process_approved_document, remove_document_from_index
@@ -75,26 +77,93 @@ def _can_review(db: Session, document: Document, user: User) -> bool:
     return _has_reviewer_scope(db, document, user)
 
 
+def _academic_scope_rank(
+    db: Session,
+    document: Document,
+    user: User,
+    affiliation: AcademicAffiliation | None = None,
+) -> int:
+    if document.course_id is None:
+        return 0
+    affiliation = affiliation or _verified_affiliation(db, user)
+    if affiliation is None:
+        return 0
+
+    course = db.get(Course, document.course_id)
+    if course is None:
+        return 0
+    department = db.get(Department, course.department_id)
+    student_department = db.get(Department, affiliation.department_id)
+    if department is None or student_department is None:
+        return 0
+    faculty = db.get(Faculty, department.faculty_id)
+    student_faculty = db.get(Faculty, student_department.faculty_id)
+    if faculty is None or student_faculty is None:
+        return 0
+    university = db.get(University, faculty.university_id)
+    student_university = db.get(University, student_faculty.university_id)
+    if university is None or student_university is None:
+        return 0
+
+    if user.role == UserRole.STUDENT and course.level:
+        if _normalized_level(course.level) != _normalized_level(affiliation.level):
+            return 0
+
+    visibility = document.visibility
+    if visibility == DocumentVisibility.COURSE.value:
+        if user.role == UserRole.STUDENT:
+            if affiliation.department_id != course.department_id or affiliation.programme_id is None:
+                return 0
+            programme = db.get(Programme, affiliation.programme_id)
+            if programme is None or programme.department_id != affiliation.department_id:
+                return 0
+            enrolled = db.scalar(
+                select(ProgrammeCourse.id).where(
+                    ProgrammeCourse.programme_id == programme.id,
+                    ProgrammeCourse.course_id == course.id,
+                ).limit(1)
+            )
+            return 4 if enrolled is not None else 0
+        if user.role == UserRole.LECTURER:
+            profile = db.scalar(
+                select(LecturerProfile).where(LecturerProfile.user_id == user.id)
+            )
+            if profile is None or profile.department_id != course.department_id:
+                return 0
+            assigned = db.scalar(
+                select(LecturerCourseAssignment.course_id).where(
+                    LecturerCourseAssignment.lecturer_profile_id == profile.id,
+                    LecturerCourseAssignment.course_id == course.id,
+                ).limit(1)
+            )
+            return 4 if assigned is not None else 0
+        return 0
+
+    if visibility == DocumentVisibility.DEPARTMENT.value:
+        return 3 if affiliation.department_id == course.department_id else 0
+    if visibility == DocumentVisibility.FACULTY.value:
+        return 2 if student_faculty.id == faculty.id else 0
+    if visibility == DocumentVisibility.UNIVERSITY.value:
+        return 1 if student_university.id == university.id else 0
+    return 0
+
+
 def _can_view(db: Session, document: Document, user: User) -> bool:
-    if document.withdrawn_at is not None:
-        return (
-            user.role == UserRole.ADMINISTRATOR
-            or document.uploaded_by_id == user.id
-            or _can_review(db, document, user)
-        )
-    if user.role == UserRole.STUDENT:
-        return (
-            _verified_affiliation(db, user) is not None
-            and document.status == DocumentStatus.VERIFIED
-        )
-    if document.status == DocumentStatus.VERIFIED:
-        return True
     if user.role == UserRole.ADMINISTRATOR or document.uploaded_by_id == user.id:
         return True
     if _can_review(db, document, user):
         return True
-    permission = db.query(DocumentPermission).filter_by(document_id=document.id, user_id=user.id).first()
-    return permission is not None
+    if document.withdrawn_at is not None or document.status != DocumentStatus.VERIFIED:
+        return False
+    permission = db.scalar(
+        select(DocumentPermission).where(
+            DocumentPermission.document_id == document.id,
+            DocumentPermission.user_id == user.id,
+        ).limit(1)
+    )
+    if permission is not None:
+        return True
+    return _academic_scope_rank(db, document, user) > 0
 
 
 def _normalized_level(value: str | None) -> str:
@@ -103,11 +172,32 @@ def _normalized_level(value: str | None) -> str:
     return "".join(character for character in value.casefold().replace("level", "") if character.isalnum())
 
 
+def _can_download(db: Session, document: Document, user: User) -> bool:
+    if not _can_view(db, document, user):
+        return False
+    if (
+        user.role == UserRole.ADMINISTRATOR
+        or document.uploaded_by_id == user.id
+        or _can_review(db, document, user)
+    ):
+        return True
+    permission = db.scalar(
+        select(DocumentPermission).where(
+            DocumentPermission.document_id == document.id,
+            DocumentPermission.user_id == user.id,
+        ).limit(1)
+    )
+    if permission is not None:
+        return permission.permission in (PermissionLevel.DOWNLOAD, PermissionLevel.EDIT)
+    return document.status == DocumentStatus.VERIFIED and document.withdrawn_at is None
+
+
 @router.post("/upload", response_model=DocumentResponse, status_code=201)
 async def upload_document(
     title: str = Form(min_length=2, max_length=200),
     description: str | None = Form(default=None),
     course_id: int = Form(...),
+    visibility: DocumentVisibility = Form(DocumentVisibility.COURSE),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(*UPLOAD_ROLES)),
@@ -141,7 +231,7 @@ async def upload_document(
         title=title.strip(), description=description.strip() if description else None,
         original_filename=file_data["original_filename"], storage_path=file_data["storage_path"],
         sha256=file_data["sha256"], file_size=file_data["file_size"], page_count=file_data["page_count"],
-        uploaded_by_id=current_user.id, course_id=course_id,
+        uploaded_by_id=current_user.id, course_id=course_id, visibility=visibility.value,
         status=DocumentStatus.DRAFT if current_user.role == UserRole.STUDENT else DocumentStatus.PENDING_REVIEW,
     )
     db.add(document)
@@ -178,34 +268,33 @@ def list_published_documents(db: Session = Depends(get_db), current_user: User =
     if current_user.role == UserRole.STUDENT:
         if affiliation is None:
             raise HTTPException(status_code=403, detail="Verify your academic affiliation to browse approved materials.")
-        student_department = db.get(Department, affiliation.department_id)
-        faculty_id = student_department.faculty_id if student_department else None
     statement = statement.order_by(Document.updated_at.desc())
-    documents = db.scalars(statement).all()
-    if affiliation is None:
-        return documents
-
-    def relevance_score(document: Document) -> int:
-        course = document.course
-        if course and course.department_id == affiliation.department_id:
-            return 4 if _normalized_level(course.level) == _normalized_level(affiliation.level) else 3
-        if course and course.department.faculty_id == faculty_id:
-            return 2
-        return 1
-
-    documents.sort(key=relevance_score, reverse=True)
+    documents = [
+        document
+        for document in db.scalars(statement).all()
+        if _can_view(db, document, current_user)
+    ]
+    documents.sort(
+        key=lambda document: (
+            _academic_scope_rank(db, document, current_user, affiliation)
+            if current_user.role == UserRole.STUDENT else 0,
+            document.updated_at,
+        ),
+        reverse=True,
+    )
     result = []
     for document in documents:
-        relevance = "Other approved material"
-        course = document.course
-        if course and course.department_id == affiliation.department_id:
-            relevance = (
-                "Your level and department"
-                if _normalized_level(course.level) == _normalized_level(affiliation.level)
-                else "Your department"
-            )
-        elif course and course.department.faculty_id == faculty_id:
-            relevance = "Your faculty"
+        relevance_rank = (
+            _academic_scope_rank(db, document, current_user, affiliation)
+            if current_user.role == UserRole.STUDENT else 0
+        )
+        relevance = {
+            4: "Your enrolled course",
+            3: "Your department",
+            2: "Your faculty",
+            1: "Your university",
+            0: "Shared with you",
+        }[relevance_rank]
         item = DocumentResponse.model_validate(document).model_dump()
         item["relevance"] = relevance
         result.append(item)
@@ -312,12 +401,8 @@ def grant_permission(
 @router.get("/{document_id}/download")
 def download_document(document_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     document = _get_document(db, document_id)
-    if not _can_view(db, document, current_user):
+    if not _can_download(db, document, current_user):
         raise HTTPException(status_code=403, detail="You do not have permission to download this document.")
-    if document.status != DocumentStatus.VERIFIED and current_user.role not in REVIEWER_ROLES:
-        permission = db.query(DocumentPermission).filter_by(document_id=document.id, user_id=current_user.id).first()
-        if document.uploaded_by_id != current_user.id and (permission is None or permission.permission not in (PermissionLevel.DOWNLOAD, PermissionLevel.EDIT)):
-            raise HTTPException(status_code=403, detail="Download permission is required.")
     path = Path(document.storage_path)
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Stored document file is missing.")

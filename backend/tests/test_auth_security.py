@@ -19,7 +19,8 @@ from app.main import app
 from app.services import document_storage
 from app.models import (
     AcademicAffiliation, AuthToken, Course, Department, Document, DocumentStatus,
-    Faculty, LecturerCourseAssignment, LecturerProfile, Programme,
+    DocumentVisibility, Faculty, LecturerCourseAssignment, LecturerProfile, Programme,
+    ProgrammeCourse,
     ReviewerAssignment, University, User, UserRole,
 )
 import app.api.auth as auth_api
@@ -323,9 +324,38 @@ def test_students_cannot_upload_and_only_published_documents_are_listed():
         code="CRS-A200", title="Other level course", level="200 Level",
         department_id=department.id,
     )
-    _, _, other_faculty_department, _, other_faculty_course = create_academic_scope(db, suffix="B")
-    db.add_all([same_faculty_course, other_level_course])
+    department_course = Course(
+        code="CRS-AD", title="Same department course", level="100 Level",
+        department_id=department.id,
+    )
+    other_faculty = Faculty(name="Faculty A2", university_id=faculty.university_id)
+    db.add(other_faculty)
     db.flush()
+    university_department = Department(name="Department A3", faculty_id=other_faculty.id)
+    db.add(university_department)
+    db.add_all([same_faculty_course, other_level_course, department_course])
+    db.flush()
+    university_course = Course(
+        code="CRS-A3", title="Same university course", level="100 Level",
+        department_id=university_department.id,
+    )
+    _, _, other_faculty_department, _, other_faculty_course = create_academic_scope(db, suffix="B")
+    db.add(university_course)
+    db.flush()
+    db.add(ProgrammeCourse(programme_id=programme.id, course_id=course.id))
+    uploader = User(
+        full_name="Published material uploader",
+        email="published.material.uploader@example.com",
+        password_hash=hash_password("Existing123!"),
+        role=UserRole.LECTURER,
+        email_verified=True,
+        is_active=True,
+    )
+    db.add(uploader)
+    db.flush()
+    db.add_all([
+        AcademicAffiliation(user_id=uploader.id, department_id=department.id, status="verified"),
+    ])
     db.add_all([
         Document(
             title="Published notes",
@@ -334,7 +364,7 @@ def test_students_cannot_upload_and_only_published_documents_are_listed():
             sha256="a" * 64,
             file_size=20,
             page_count=1,
-            uploaded_by_id=student.id,
+            uploaded_by_id=uploader.id,
             course_id=course.id,
             status=DocumentStatus.VERIFIED,
         ),
@@ -345,8 +375,21 @@ def test_students_cannot_upload_and_only_published_documents_are_listed():
             sha256="f" * 64,
             file_size=20,
             page_count=1,
-            uploaded_by_id=student.id,
+            uploaded_by_id=uploader.id,
             course_id=other_level_course.id,
+            visibility=DocumentVisibility.DEPARTMENT.value,
+            status=DocumentStatus.VERIFIED,
+        ),
+        Document(
+            title="Department notes",
+            original_filename="department.pdf",
+            storage_path="missing-department.pdf",
+            sha256="4" * 64,
+            file_size=20,
+            page_count=1,
+            uploaded_by_id=uploader.id,
+            course_id=department_course.id,
+            visibility=DocumentVisibility.DEPARTMENT.value,
             status=DocumentStatus.VERIFIED,
         ),
         Document(
@@ -356,8 +399,21 @@ def test_students_cannot_upload_and_only_published_documents_are_listed():
             sha256="1" * 64,
             file_size=20,
             page_count=1,
-            uploaded_by_id=student.id,
+            uploaded_by_id=uploader.id,
             course_id=same_faculty_course.id,
+            visibility=DocumentVisibility.FACULTY.value,
+            status=DocumentStatus.VERIFIED,
+        ),
+        Document(
+            title="University notes",
+            original_filename="university.pdf",
+            storage_path="missing-university.pdf",
+            sha256="3" * 64,
+            file_size=20,
+            page_count=1,
+            uploaded_by_id=uploader.id,
+            course_id=university_course.id,
+            visibility=DocumentVisibility.UNIVERSITY.value,
             status=DocumentStatus.VERIFIED,
         ),
         Document(
@@ -367,8 +423,9 @@ def test_students_cannot_upload_and_only_published_documents_are_listed():
             sha256="2" * 64,
             file_size=20,
             page_count=1,
-            uploaded_by_id=student.id,
+            uploaded_by_id=uploader.id,
             course_id=other_faculty_course.id,
+            visibility=DocumentVisibility.UNIVERSITY.value,
             status=DocumentStatus.VERIFIED,
         ),
         Document(
@@ -378,7 +435,7 @@ def test_students_cannot_upload_and_only_published_documents_are_listed():
             sha256="b" * 64,
             file_size=20,
             page_count=1,
-            uploaded_by_id=student.id,
+            uploaded_by_id=uploader.id,
             status=DocumentStatus.PENDING_REVIEW,
         ),
     ])
@@ -386,6 +443,7 @@ def test_students_cannot_upload_and_only_published_documents_are_listed():
     department_id = department.id
     programme_id = programme.id
     pending_document_id = db.query(Document).filter_by(title="Pending notes").one().id
+    outside_document_id = db.query(Document).filter_by(title="Other university notes").one().id
     db.close()
     submitted = client.put(
         "/api/academic/affiliation/me",
@@ -414,12 +472,16 @@ def test_students_cannot_upload_and_only_published_documents_are_listed():
     published = client.get("/api/documents/published", headers=headers)
     assert published.status_code == 200
     assert [doc["title"] for doc in published.json()] == [
-        "Published notes", "Other level notes", "Faculty notes", "Other university notes",
+        "Published notes", "Department notes", "Faculty notes", "University notes",
     ]
-    assert published.json()[0]["relevance"] == "Your level and department"
-    assert published.json()[1]["relevance"] == "Your department"
-    assert published.json()[2]["relevance"] == "Your faculty"
-    assert published.json()[3]["relevance"] == "Other approved material"
+    assert [doc["relevance"] for doc in published.json()] == [
+        "Your enrolled course", "Your department", "Your faculty", "Your university",
+    ]
+    visible_document_id = published.json()[0]["id"]
+    assert client.get(f"/api/documents/{visible_document_id}", headers=headers).status_code == 200
+    assert client.get(f"/api/documents/{outside_document_id}", headers=headers).status_code == 403
+    assert client.get(f"/api/documents/{outside_document_id}/download", headers=headers).status_code == 403
+    assert client.get(f"/api/documents/{visible_document_id}/download", headers=headers).status_code == 404
     hidden = client.get(f"/api/documents/{pending_document_id}", headers=headers)
     assert hidden.status_code == 403
 

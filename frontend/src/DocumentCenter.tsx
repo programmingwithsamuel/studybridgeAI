@@ -5,6 +5,7 @@ type CourseOption = { id: number; code: string; title: string; level: string | n
 type Doc = {
   id: number; title: string; description?: string | null; original_filename: string
   file_size: number; page_count: number; uploaded_by_id: number; course_id?: number | null
+  visibility: 'course' | 'department' | 'faculty' | 'university' | 'private'
   status: 'draft' | 'pending_review' | 'verified' | 'rejected' | 'superseded'
   created_at: string; updated_at: string; relevance?: string | null
 }
@@ -48,6 +49,7 @@ export default function DocumentCenter({ user, token, onNavigate }: {
   const [description, setDescription] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [courseId, setCourseId] = useState('')
+  const [visibility, setVisibility] = useState<Doc['visibility']>('course')
   const [reviewComment, setReviewComment] = useState('')
   const [reviewAction, setReviewAction] = useState<'approve' | 'reject' | 'request_correction'>('approve')
   const [permissionUser, setPermissionUser] = useState('')
@@ -103,12 +105,13 @@ export default function DocumentCenter({ user, token, onNavigate }: {
     body.append('title', title.trim())
     if (description.trim()) body.append('description', description.trim())
     body.append('course_id', courseId)
+    body.append('visibility', visibility)
     body.append('file', file)
     setBusy(true); setError(''); setNotice('')
     try {
       const created = await request<Doc>('/api/documents/upload', token, { method: 'POST', body })
       setNotice(`“${created.title}” uploaded. Current status: ${statusLabel[created.status]}.`)
-      setTitle(''); setDescription(''); setFile(null); setCourseId('')
+      setTitle(''); setDescription(''); setFile(null); setCourseId(''); setVisibility('course')
       const form = document.getElementById('document-upload-form') as HTMLFormElement | null
       form?.reset()
       await load()
@@ -224,6 +227,7 @@ export default function DocumentCenter({ user, token, onNavigate }: {
         <label>Document title<input value={title} onChange={e => setTitle(e.target.value)} required minLength={2} maxLength={200} placeholder="e.g. COS 101 Lecture Notes"/></label>
         <label>Description (optional)<textarea value={description} onChange={e => setDescription(e.target.value)} rows={3} maxLength={2000} placeholder="Briefly describe this material"/></label>
         <label>Assigned course<select required value={courseId} onChange={e => setCourseId(e.target.value)}><option value="">Select a course</option>{courses.map(course => <option key={course.id} value={course.id}>{course.code} · {course.title}{course.level ? ` · ${course.level}` : ''}</option>)}</select></label>
+        <label>Who can access this material<select value={visibility} onChange={e => setVisibility(e.target.value as Doc['visibility'])}><option value="course">Enrolled students in this course</option><option value="department">Students in this department</option><option value="faculty">Students in this faculty</option><option value="university">Students in this university</option><option value="private">Only people explicitly granted access</option></select></label>
         {!courses.length && <p className="form-alert form-warning">No courses are assigned to your lecturer account. Ask an administrator to assign your courses before uploading materials.</p>}
         <label>PDF file<input type="file" accept="application/pdf,.pdf" required onChange={e => setFile(e.target.files?.[0] || null)}/></label>
         <button className="button" disabled={busy || !file || !courseId}>{busy ? 'Working…' : 'Upload PDF'}</button>

@@ -8,7 +8,7 @@ pwdlib[argon2]
 PyJWT
 requests
 pytest
-httpx2
+httpx
 chromadb==1.5.9
 sentence-transformers==6.3.0
 google-genai==3.6.1
