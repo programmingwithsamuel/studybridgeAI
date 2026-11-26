@@ -1,16 +1,25 @@
 
 import hashlib
+import os
 from pathlib import Path
 from uuid import uuid4
 
 import pymupdf
 from fastapi import UploadFile
 
+
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DOCUMENT_STORAGE = PROJECT_ROOT / "storage" / "documents"
+
+DOCUMENT_STORAGE = Path(
+    os.getenv(
+        "DOCUMENT_STORAGE_PATH",
+        str(PROJECT_ROOT / "storage" / "documents"),
+    )
+).expanduser()
 
 MAX_FILE_SIZE = 20 * 1024 * 1024
 CHUNK_SIZE = 1024 * 1024
+
 
 async def save_pdf(upload: UploadFile) -> dict:
     original_filename = Path(upload.filename or "").name
