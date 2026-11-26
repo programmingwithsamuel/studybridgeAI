@@ -15,6 +15,14 @@ class Settings(BaseSettings):
     EMAIL_MODE: str = "console"
     RESEND_API_KEY: str = ""
     EMAIL_FROM: str = "StudyBridge AI <onboarding@resend.dev>"
+
+    # Gmail SMTP configuration
+    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = ""
+
     FRONTEND_BASE_URL: str = "http://localhost:5173"
 
     AUTH_TOKEN_EXPIRE_MINUTES: int = 30
